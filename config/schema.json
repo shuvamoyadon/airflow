@@ -1,0 +1,26 @@
+{
+  "field_mappings": [
+    {"source_field": "sgk_cfm_customer_id", "target_field": "ClientCategory__c"},
+    {"source_field": "source_system_cd", "target_field": "Business_Segment_LOB_Text__c"},
+    {"source_field": "business_unit_cd", "target_field": "ExternalId__c"},
+    {"source_field": "line_of_business_cd", "target_field": "Plan_Sponsor_ID__c"},
+    {"source_field": "business_hash_key_id", "target_field": "Carrier_Id__c"},
+    {"source_field": "customer_id", "target_field": "Legal_Client_Name__c"},
+    {"source_field": "customer_alternate_nm", "target_field": ""},
+    {"source_field": "source_customer_qualifier_cd", "target_field": ""},
+    {"source_field": "address_line_1_txt", "target_field": "ShippingStreet"},
+    {"source_field": "city_nm", "target_field": "ShippingCity"},
+    {"source_field": "country_cd", "target_field": "ShippingCountry"},
+    {"source_field": "postal_cd", "target_field": "ShippingPostalCode"},
+    {"source_field": "state_cd", "target_field": "ShippingState"},
+    {"source_field": "account_manager_nm", "target_field": ""},
+    {"source_field": "restricted_data_access_ind", "target_field": "Restricted_Client_Data__c"},
+    {"source_field": "sf_client_id", "target_field": "Number_Id__c"},
+    {"source_field": "sf_account_owner_id", "target_field": "OwnerId"},
+    {"source_field": "sf_business_unit_nm", "target_field": "Contracting_Entity_Name__c"},
+    {"source_field": "sf_platform_id_level_nm", "target_field": "ClientLevel__c"},
+    {"source_field": "sf_coalition_ind", "target_field": "Coalition__c"},
+    {"source_field": "sf_care_mgmnt_owner_nm", "target_field": "CMAM_Owner__c"},
+    {"source_field": "sf_customer_data_flag", "target_field": "Client_Data_Flag__c"}
+  ]
+}
