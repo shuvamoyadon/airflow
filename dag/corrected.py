@@ -63,44 +63,56 @@ def generate_merge_sql(**kwargs):
     storage_client = storage.Client()
     mapping = {m["source_field"]: m.get("target_field", "") for m in config_data["field_mappings"]}
 
-    # Fetch column list from target table
+    # -------------------------
+    # Fetch column names & data types from target table schema
+    # -------------------------
     schema_query = f"""
-        SELECT column_name
+        SELECT column_name, data_type
         FROM `{PROJECT_ID}.{DATASET}.INFORMATION_SCHEMA.COLUMNS`
         WHERE table_name = 'source_customer_data'
         ORDER BY ordinal_position
     """
-    source_cols = [r["column_name"] for r in client.query(schema_query).result()]
+    schema_result = list(client.query(schema_query).result())
+
+    # Build datatype lookup
+    schema_dict = {row["column_name"]: row["data_type"].upper() for row in schema_result}
+    source_cols = list(schema_dict.keys())
 
     # -------------------------
-    # Build SELECT expression for each column
+    # Build SELECT expression per column with type casting
     # -------------------------
     select_exprs = []
     for col in source_cols:
         target_field = mapping.get(col, "").strip()
+        col_type = schema_dict[col]
 
-        # Skip audit fields (we'll handle them in the MERGE template)
+        # Skip audit columns (timestamps handled in template)
         if col in ("created_date", "last_modified_date"):
             continue
 
+        # Determine value expression
         if not target_field:
-            # Explicitly cast NULL as STRING to prevent INT64 type errors
-            expr = f"CAST(NULL AS STRING) AS {col}"
+            expr = f"CAST(NULL AS {col_type}) AS {col}"
         else:
-            # Safely extract from JSON (.value or raw)
-            expr = (
+            base_expr = (
                 f"COALESCE("
                 f"JSON_VALUE(json_string, '$.Account.{target_field}.value'), "
                 f"JSON_VALUE(json_string, '$.Account.{target_field}')"
-                f") AS {col}"
+                f")"
             )
+            # Apply CAST according to data type
+            if col_type in ("STRING", "BOOL", "BOOLEAN", "INT64", "FLOAT64", "TIMESTAMP", "DATE"):
+                expr = f"SAFE_CAST({base_expr} AS {col_type}) AS {col}"
+            else:
+                # Default to string if datatype unrecognized
+                expr = f"SAFE_CAST({base_expr} AS STRING) AS {col}"
 
         select_exprs.append(expr)
 
     select_columns = ",\n    ".join(select_exprs)
 
     # -------------------------
-    # Load & render SQL Jinja template from GCS
+    # Load and render SQL Jinja template
     # -------------------------
     sql_blob = storage_client.bucket(BUCKET_NAME).blob(SQL_TEMPLATE_PATH)
     sql_template_text = sql_blob.download_as_text()
@@ -112,19 +124,20 @@ def generate_merge_sql(**kwargs):
         select_columns=select_columns,
         source_columns=source_cols,
         raw_table=RAW_TABLE,
-        target_table=FINAL_TABLE,
+        target_table=TARGET_TABLE,
     )
 
     # -------------------------
-    # (Optional) Upload the rendered SQL to GCS for debugging
+    # Save generated SQL for debugging
     # -------------------------
-    debug_blob = storage_client.bucket(BUCKET_NAME).blob("logs/rendered_merge.sql")
+    debug_blob = storage_client.bucket(BUCKET_NAME).blob("logs/test.sql")
     debug_blob.upload_from_string(rendered_sql)
 
     # -------------------------
-    # Execute the generated MERGE
+    # Execute the MERGE
     # -------------------------
     client.query(rendered_sql).result()
+    print("✅ MERGE completed successfully.")
 
 
 # -------------------------------
@@ -133,6 +146,6 @@ def generate_merge_sql(**kwargs):
 
 build_insert_task = PythonOperator(
     task_id="build_and_execute_mapping_query",
-    python_callable=generate_dynamic_sql,
+    python_callable=generate_merge_sql,
     dag=dag,
 )
