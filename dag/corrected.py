@@ -1,0 +1,138 @@
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
+from google.cloud import storage
+from google.cloud import bigquery
+from datetime import datetime
+import json
+
+# -------------------------------
+# CONFIG
+# -------------------------------
+
+PROJECT_ID = "edp-dev-storage"
+PROJECT_NAME = "edp-dev-carema"
+DATASET = "edp_ent_cma_plss_onboarding_src"
+GCP_CONN_ID = "bigquery_plss"
+LOCATION = "US"
+JSON_COL = "fullvalue"
+SOURCE_TABLE = f"{PROJECT_ID}.{DATASET}.source_customer_data"
+TARGET_TABLE = f"{PROJECT_ID}.{DATASET}.Account"
+FINAL_TABLE = f"{PROJECT_ID}.{DATASET}.SRC_CUSTOMER1"
+CONFIG_FILE = "NO_APP_ACRONYM_PROVIDED-NO_APP_LOB_PROVIDED/plss_onboarding_platform/schema1.json"
+BUCKET_NAME = "plss-onboarding-lan-ent-dev"
+SQL_TEMPLATE_PATH = "sql/test.sql"
+
+default_args = {
+    "start_date": datetime(2025, 11, 9)
+}
+
+dag = DAG(
+    "plss_test_dag",
+    default_args=default_args,
+    schedule_interval=None,
+    description="Map JSON target fields to source columns dynamically and insert final data",
+    tags=[
+        "vss_app_id:APM0017121",
+        "project_id:edp-dev-carema"
+    ],
+)
+
+# -------------------------
+# MAIN FUNCTION
+# -------------------------
+def generate_merge_sql(**kwargs):
+    """
+    Generate and execute dynamic SCD1 MERGE SQL for BigQuery.
+    - Reads schema mapping JSON from GCS
+    - Builds SELECT expressions dynamically
+    - Renders SQL template from GCS
+    - Executes MERGE query using BigQueryHook
+    """
+
+    #hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID, location=LOCATION)
+    client = bigquery.Client(project=PROJECT_NAME)
+
+    # Load config JSON from GCS
+    gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
+    gcs_content = gcs_hook.download(bucket_name=BUCKET_NAME, object_name=CONFIG_FILE).decode("utf-8")
+    config_data = json.loads(gcs_content)
+
+    # Connect to GCS
+    storage_client = storage.Client()
+    mapping = {m["source_field"]: m.get("target_field", "") for m in config_data["field_mappings"]}
+
+    # Fetch column list from target table
+    schema_query = f"""
+        SELECT column_name
+        FROM `{PROJECT_ID}.{DATASET}.INFORMATION_SCHEMA.COLUMNS`
+        WHERE table_name = 'source_customer_data'
+        ORDER BY ordinal_position
+    """
+    source_cols = [r["column_name"] for r in client.query(schema_query).result()]
+
+    # -------------------------
+    # Build SELECT expression for each column
+    # -------------------------
+    select_exprs = []
+    for col in source_cols:
+        target_field = mapping.get(col, "").strip()
+
+        # Skip audit fields (we'll handle them in the MERGE template)
+        if col in ("created_date", "last_modified_date"):
+            continue
+
+        if not target_field:
+            # Explicitly cast NULL as STRING to prevent INT64 type errors
+            expr = f"CAST(NULL AS STRING) AS {col}"
+        else:
+            # Safely extract from JSON (.value or raw)
+            expr = (
+                f"COALESCE("
+                f"JSON_VALUE(json_string, '$.Account.{target_field}.value'), "
+                f"JSON_VALUE(json_string, '$.Account.{target_field}')"
+                f") AS {col}"
+            )
+
+        select_exprs.append(expr)
+
+    select_columns = ",\n    ".join(select_exprs)
+
+    # -------------------------
+    # Load & render SQL Jinja template from GCS
+    # -------------------------
+    sql_blob = storage_client.bucket(BUCKET_NAME).blob(SQL_TEMPLATE_PATH)
+    sql_template_text = sql_blob.download_as_text()
+    template = Template(sql_template_text)
+
+    rendered_sql = template.render(
+        project_id=PROJECT_ID,
+        dataset=DATASET,
+        select_columns=select_columns,
+        source_columns=source_cols,
+        raw_table=RAW_TABLE,
+        target_table=FINAL_TABLE,
+    )
+
+    # -------------------------
+    # (Optional) Upload the rendered SQL to GCS for debugging
+    # -------------------------
+    debug_blob = storage_client.bucket(BUCKET_NAME).blob("logs/rendered_merge.sql")
+    debug_blob.upload_from_string(rendered_sql)
+
+    # -------------------------
+    # Execute the generated MERGE
+    # -------------------------
+    client.query(rendered_sql).result()
+
+
+# -------------------------------
+# OPERATOR
+# -------------------------------
+
+build_insert_task = PythonOperator(
+    task_id="build_and_execute_mapping_query",
+    python_callable=generate_dynamic_sql,
+    dag=dag,
+)
