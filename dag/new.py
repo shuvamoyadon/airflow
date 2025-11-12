@@ -65,7 +65,7 @@ def generate_merge_sql(**kwargs):
     config_data = json.loads(gcs_content)
 
     mapping = {m["source_field"]: m.get("target_field", "") for m in config_data.get("field_mappings", [])}
-    print("✅ Mapping dictionary loaded:", mapping)
+    print("Mapping dictionary loaded:", mapping)
 
     # ---------------------------
     # Fetch target table schema
@@ -79,7 +79,6 @@ def generate_merge_sql(**kwargs):
     schema_result = list(client.query(schema_query).result())
     schema_dict = {row["column_name"]: row["data_type"].upper() for row in schema_result}
     source_cols = list(schema_dict.keys())
-    print("✅ Schema columns:", source_cols)
 
     # ---------------------------
     # Build SELECT expressions
@@ -155,7 +154,7 @@ dag = DAG(
     default_args=default_args,
     schedule_interval=None,
     description="Dynamic JSON → BigQuery mapping + SCD1 merge using Sf_account_id",
-    tags=["cvs_app_id:APM0017121", "project_id:edp-dev-carema"],
+    tags=[],
 )
 
 build_insert_task = PythonOperator(
