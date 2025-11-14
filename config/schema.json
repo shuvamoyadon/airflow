@@ -22,5 +22,9 @@
     {"source_field": "sf_coalition_ind", "target_field": "Coalition__c"},
     {"source_field": "sf_care_mgmnt_owner_nm", "target_field": "CMAM_Owner__c"},
     {"source_field": "sf_customer_data_flag", "target_field": "Client_Data_Flag__c"}
+  ],
+  "non_json_key": [
+    {"source_field": "ID", "target_field": "sf_account_id"},
+    {"source_field": "Name", "target_field": "customer_nm"}
   ]
 }
