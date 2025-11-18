@@ -62,9 +62,10 @@
     {"target_field": "customer_nm", "source_field": "Plan_Sponsor__Name__c"},
     {"target_field": "account_manager_nm", "source_field": "Athena_Account_Manager__c"},
     {"target_field": "customer_id", "source_field": "ExternalId__c"}
-    
   ],
-
+  "json_field_mappings": [
+    {"target_field": "client_type", "source_field": "attribute_type"}
+  ],
   "non_json_keys": [
     {"target_field": "ID", "source_field": "sf_account_id"},
     {"target_field": "Name", "source_field": "customer_nm"}
