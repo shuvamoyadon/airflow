@@ -14,13 +14,13 @@ USING (
         NULL AS source_record_sequence_nbr,
 
         -- Business Hash Key (MD5 business columns)
-        TO_HEX(MD5(
+       TO_HEX(MD5(
           ARRAY_TO_STRING([
-            CAST(customer_id AS STRING),
-            CAST(business_unit_cd AS STRING),
-            CAST(line_of_business_cd AS STRING),
-            CAST(city_nm AS STRING)
-          ], '|')
+            COALESCE(CAST(customer_id AS STRING), 'X'),
+            COALESCE(CAST(business_unit_cd AS STRING), 'X'),
+            COALESCE(CAST(line_of_business_cd AS STRING), 'X'),
+            COALESCE(CAST(city_nm AS STRING), 'X')
+          ], ' | ')
         )) AS business_hash_key_id,
 
         -- Record Hash Key (SCD2)
