@@ -1,52 +1,102 @@
-MERGE INTO `target_CUSTOMER` T
+MERGE INTO `playground-s-11-4fb5e497.test.tar_CUSTOMER` AS T
 USING (
     SELECT
+        -- Surrogate key (always new)
         GENERATE_UUID() AS sgk_cfm_customer_id,
+
+        -- Direct source fields
         source_system_cd,
         business_unit_cd,
         line_of_business_cd,
+
         CURRENT_TIMESTAMP() AS insert_dts,
         NULL AS record_status_cd,
         NULL AS source_record_sequence_nbr,
-        TO_HEX(MD5(CONCAT(
-            COALESCE(customer_id,''), 
-            COALESCE(business_unit_cd,''), 
-            COALESCE(line_of_business_cd,''), 
-            COALESCE(city_nm,'')
-        ))) AS business_hash_key_id,
-        TO_HEX(MD5(CONCAT_WS('|',
-            customer_id, customer_nm, customer_alternate_nm,
-            master_customer_id, parent_customer_id, source_customer_id,
-            source_customer_qualifier_cd, customer_type_cd,
-            address_line_1_txt, address_line_2_txt, address_type_cd,
-            city_nm, country_cd, country_dialing_cd, county_cd,
-            international_address_ind, phone_area_cd, phone_connection_type_cd,
-            phone_nbr, phone_prefix_cd, phone_suffix_cd, phone_usage_type_cd,
-            postal_cd, postal_extension_cd, state_cd,
-            account_manager_nm, implementation_team_manager_nm,
-            new_customer_ind, restricted_data_access_ind,
-            end_to_end_customer_ind, new_contract_ind,
-            sf_account_id, sf_client_id, sf_account_owner_id,
-            sf_business_unit_nm, sf_platform_id_level_nm, sf_coalition_id,
-            sf_customer_desc, sf_care_mgmt_owner_nm,
-            sf_customer_data_flag, sf_customer_data_flag_notes,
-            sf_client_industry_nm, sf_client_industry_peer_group_nm,
-            orig_src_pst_dts, sf_record_type_id, sf_client_level
-        ))) AS record_hash_key_id,
+
+        -- Business Hash Key (MD5 business columns)
+        TO_HEX(MD5(
+          ARRAY_TO_STRING([
+            CAST(customer_id AS STRING),
+            CAST(business_unit_cd AS STRING),
+            CAST(line_of_business_cd AS STRING),
+            CAST(city_nm AS STRING)
+          ], '|')
+        )) AS business_hash_key_id,
+
+        -- Record Hash Key (SCD2)
+        TO_HEX(MD5(
+          ARRAY_TO_STRING([
+            CAST(customer_id AS STRING),
+            CAST(customer_nm AS STRING),
+            CAST(customer_alternate_nm AS STRING),
+            CAST(master_customer_id AS STRING),
+            CAST(parent_customer_id AS STRING),
+            CAST(source_customer_id AS STRING),
+            CAST(source_customer_qualifier_cd AS STRING),
+            CAST(customer_type_cd AS STRING),
+            CAST(address_line_1_txt AS STRING),
+            CAST(address_line_2_txt AS STRING),
+            CAST(address_type_cd AS STRING),
+            CAST(city_nm AS STRING),
+            CAST(country_cd AS STRING),
+            CAST(country_dialing_cd AS STRING),
+            CAST(county_cd AS STRING),
+            CAST(international_address_ind AS STRING),
+            CAST(phone_area_cd AS STRING),
+            CAST(phone_connection_type_cd AS STRING),
+            CAST(phone_nbr AS STRING),
+            CAST(phone_prefix_cd AS STRING),
+            CAST(phone_suffix_cd AS STRING),
+            CAST(phone_usage_type_cd AS STRING),
+            CAST(postal_cd AS STRING),
+            CAST(postal_extension_cd AS STRING),
+            CAST(state_cd AS STRING),
+            CAST(account_manager_nm AS STRING),
+            CAST(implementation_team_manager_nm AS STRING),
+            CAST(new_customer_ind AS STRING),
+            CAST(restricted_data_access_ind AS STRING),
+            CAST(end_to_end_customer_ind AS STRING),
+            CAST(new_contract_ind AS STRING),
+            CAST(sf_account_id AS STRING),
+            CAST(sf_client_id AS STRING),
+            CAST(sf_account_owner_id AS STRING),
+            CAST(sf_business_unit_nm AS STRING),
+            CAST(sf_platform_id_level_nm AS STRING),
+            CAST(sf_coalition_id AS STRING),
+            CAST(sf_customer_desc AS STRING),
+            CAST(sf_care_mgmt_owner_nm AS STRING),
+            CAST(sf_customer_data_flag AS STRING),
+            CAST(sf_customer_data_flag_notes AS STRING),
+            CAST(sf_client_industry_nm AS STRING),
+            CAST(sf_client_industry_peer_group_nm AS STRING),
+            CAST(orig_src_pst_dts AS STRING),
+            CAST(sf_record_type_id AS STRING),
+            CAST(sf_client_level AS STRING)
+          ], '|')
+        )) AS record_hash_key_id,
+
         CURRENT_TIMESTAMP() AS last_process_dts,
         source_last_process_dts,
         business_effective_dt,
         business_expiration_dt,
+
         CURRENT_TIMESTAMP() AS record_start_dts,
-        DATE '9999-12-31' AS record_end_dts,
+        TIMESTAMP('9999-12-31 00:00:00 UTC') AS record_end_dts,
         'Y' AS active_record_ind,
+
         sgk_job_run_id,
-        TO_HEX(MD5(CONCAT(
-            COALESCE(customer_id,''), 
-            COALESCE(customer_nm,'')
-        ))) AS business_key_txt,
+
+        -- Business Key Text
+        TO_HEX(MD5(
+          ARRAY_TO_STRING([
+            CAST(customer_id AS STRING),
+            CAST(customer_nm AS STRING)
+          ], '|')
+        )) AS business_key_txt,
+
         updated_by,
-        -- all other source columns
+
+        -- Remaining columns
         customer_id,
         customer_nm,
         customer_alternate_nm,
@@ -94,21 +144,20 @@ USING (
         sf_record_type_id,
         sf_client_level
 
-    FROM `stg.SRC_CUSTOMER_STAGE`
-) S
+    FROM `playground-s-11-4fb5e497.test.src_customer`
+) AS S
+
 ON T.customer_id = S.customer_id
 AND T.active_record_ind = 'Y'
+WHEN MATCHED 
+  AND T.record_hash_key_id != S.record_hash_key_id
+THEN UPDATE SET
+    T.active_record_ind = 'N',
+    T.record_end_dts = TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)),
+    T.source_last_process_dts = CURRENT_TIMESTAMP(),
+    T.last_process_dts = CURRENT_TIMESTAMP()
 
-WHEN MATCHED AND T.record_hash_key_id != S.record_hash_key_id THEN
-  UPDATE SET
-      T.active_record_ind = 'N',
-      T.record_end_dts = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY),
-      T.source_last_process_dts = CURRENT_TIMESTAMP(),
-      T.last_process_dts = CURRENT_TIMESTAMP();
-
-WHEN NOT MATCHED BY TARGET OR 
-     (T.record_hash_key_id != S.record_hash_key_id AND T.active_record_ind = 'Y')
-THEN
+WHEN NOT MATCHED THEN
 INSERT (
     sgk_cfm_customer_id,
     source_system_cd,
@@ -181,18 +230,24 @@ VALUES (
     S.source_system_cd,
     S.business_unit_cd,
     S.line_of_business_cd,
-    CURRENT_TIMESTAMP(),
-    NULL,
-    NULL,
+    S.insert_dts,
+
+    -- FIXED: record_status_cd is STRING in target
+    CAST(S.record_status_cd AS STRING),
+
+    S.source_record_sequence_nbr,
     S.business_hash_key_id,
     S.record_hash_key_id,
-    CURRENT_TIMESTAMP(),
-    CURRENT_TIMESTAMP(),
+    S.last_process_dts,
+    S.source_last_process_dts,
     S.business_effective_dt,
     S.business_expiration_dt,
-    CURRENT_TIMESTAMP(),
-    DATE '9999-12-31',
-    'Y',
+    S.record_start_dts,
+
+    -- FIXED: record_end_dts MUST be TIMESTAMP
+    TIMESTAMP('9999-12-31 00:00:00 UTC'),
+
+    S.active_record_ind,
     S.sgk_job_run_id,
     S.business_key_txt,
     S.updated_by,
