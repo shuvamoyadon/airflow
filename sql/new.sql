@@ -1,31 +1,133 @@
+-- ==========================================================
+--  VALIDATION + SCD2 MERGE SCRIPT (CORRECT DECLARE POSITION)
+-- ==========================================================
+
+--------------------------------------------------------------
+-- 0. DECLARE VARIABLES (must appear first before everything)
+--------------------------------------------------------------
+
+DECLARE null_customer_id INT64 DEFAULT 0;
+DECLARE null_sf_account_id INT64 DEFAULT 0;
+DECLARE null_customer_nm INT64 DEFAULT 0;
+
+DECLARE dup_customer_id INT64 DEFAULT 0;
+DECLARE dup_sf_account_id INT64 DEFAULT 0;
+DECLARE dup_customer_nm INT64 DEFAULT 0;
+
+--------------------------------------------------------------
+-- START TRANSACTION AFTER DECLARE
+--------------------------------------------------------------
+
+BEGIN TRANSACTION;
+
+--------------------------------------------------------------
+-- 1. VALIDATION: NOT NULL CHECKS
+--------------------------------------------------------------
+
+SET null_customer_id = (
+  SELECT COUNT(*)
+  FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+  WHERE customer_id IS NULL
+);
+
+IF null_customer_id > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: NULL customer_id found.';
+END IF;
+
+
+SET null_sf_account_id = (
+  SELECT COUNT(*)
+  FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+  WHERE sf_account_id IS NULL
+);
+
+IF null_sf_account_id > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: NULL sf_account_id found.';
+END IF;
+
+
+SET null_customer_nm = (
+  SELECT COUNT(*)
+  FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+  WHERE customer_nm IS NULL
+);
+
+IF null_customer_nm > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: NULL customer_nm found.';
+END IF;
+
+
+--------------------------------------------------------------
+-- 2. VALIDATION: UNIQUENESS CHECKS
+--------------------------------------------------------------
+
+SET dup_customer_id = (
+  SELECT COUNT(*) FROM (
+    SELECT customer_id
+    FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+    GROUP BY customer_id
+    HAVING COUNT(*) > 1
+  )
+);
+
+IF dup_customer_id > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: Duplicate customer_id found.';
+END IF;
+
+
+SET dup_sf_account_id = (
+  SELECT COUNT(*) FROM (
+    SELECT sf_account_id
+    FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+    GROUP BY sf_account_id
+    HAVING COUNT(*) > 1
+  )
+);
+
+IF dup_sf_account_id > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: Duplicate sf_account_id found.';
+END IF;
+
+
+SET dup_customer_nm = (
+  SELECT COUNT(*) FROM (
+    SELECT customer_nm
+    FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
+    GROUP BY customer_nm
+    HAVING COUNT(*) > 1
+  )
+);
+
+IF dup_customer_nm > 0 THEN
+  RAISE USING MESSAGE = 'VALIDATION FAILED: Duplicate customer_nm found.';
+END IF;
+
+
+--------------------------------------------------------------
+-- 3. MERGE EXECUTES ONLY IF VALIDATION SUCCEEDS
+--------------------------------------------------------------
+
 MERGE INTO `playground-s-11-4fb5e497.test.tar_CUSTOMER` AS T
 USING (
     SELECT
-        -- Surrogate key (always new)
         GENERATE_UUID() AS sgk_cfm_customer_id,
-
-        -- Direct source fields
         source_system_cd,
         business_unit_cd,
         line_of_business_cd,
-
         CURRENT_TIMESTAMP() AS insert_dts,
-        NULL AS record_status_cd,
-        NULL AS source_record_sequence_nbr,
+        record_status_cd,
+        source_record_sequence_nbr,
 
-        -- Business Hash Key (MD5 business columns)
-       TO_HEX(MD5(
-          ARRAY_TO_STRING([
-            COALESCE(CAST(customer_id AS STRING), 'X'),
-            COALESCE(CAST(business_unit_cd AS STRING), 'X'),
-            COALESCE(CAST(line_of_business_cd AS STRING), 'X'),
-            COALESCE(CAST(city_nm AS STRING), 'X')
-          ], ' | ')
-        )) AS business_hash_key_id,
+        -- BUSINESS HASH
+        TO_HEX(MD5(ARRAY_TO_STRING([
+            COALESCE(customer_id, 'X'),
+            COALESCE(business_unit_cd, 'X'),
+            COALESCE(line_of_business_cd, 'X'),
+            COALESCE(city_nm, 'X')
+        ], '|'))) AS business_hash_key_id,
 
-        -- Record Hash Key (SCD2)
-        TO_HEX(MD5(
-          ARRAY_TO_STRING([
+        -- RECORD HASH (SCD2)
+        TO_HEX(MD5(ARRAY_TO_STRING([
             CAST(customer_id AS STRING),
             CAST(customer_nm AS STRING),
             CAST(customer_alternate_nm AS STRING),
@@ -72,31 +174,24 @@ USING (
             CAST(orig_src_pst_dts AS STRING),
             CAST(sf_record_type_id AS STRING),
             CAST(sf_client_level AS STRING)
-          ], '|')
-        )) AS record_hash_key_id,
+        ], '|'))) AS record_hash_key_id,
 
         CURRENT_TIMESTAMP() AS last_process_dts,
         source_last_process_dts,
         business_effective_dt,
         business_expiration_dt,
-
         CURRENT_TIMESTAMP() AS record_start_dts,
         TIMESTAMP('9999-12-31 00:00:00 UTC') AS record_end_dts,
         'Y' AS active_record_ind,
-
         sgk_job_run_id,
 
-        -- Business Key Text
-        TO_HEX(MD5(
-          ARRAY_TO_STRING([
+        -- BUSINESS KEY TEXT
+        TO_HEX(MD5(ARRAY_TO_STRING([
             CAST(customer_id AS STRING),
             CAST(customer_nm AS STRING)
-          ], '|')
-        )) AS business_key_txt,
+        ], '|'))) AS business_key_txt,
 
         updated_by,
-
-        -- Remaining columns
         customer_id,
         customer_nm,
         customer_alternate_nm,
@@ -144,157 +239,156 @@ USING (
         sf_record_type_id,
         sf_client_level
 
-    FROM `playground-s-11-4fb5e497.test.src_customer`
+    FROM `playground-s-11-b7de6e2b.test.SRC_CUSTOMER`
 ) AS S
 
 ON T.customer_id = S.customer_id
 AND T.active_record_ind = 'Y'
-WHEN MATCHED 
-  AND T.record_hash_key_id != S.record_hash_key_id
-THEN UPDATE SET
+
+WHEN MATCHED AND T.record_hash_key_id != S.record_hash_key_id THEN
+  UPDATE SET
     T.active_record_ind = 'N',
     T.record_end_dts = TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)),
     T.source_last_process_dts = CURRENT_TIMESTAMP(),
     T.last_process_dts = CURRENT_TIMESTAMP()
 
 WHEN NOT MATCHED THEN
-INSERT (
-    sgk_cfm_customer_id,
-    source_system_cd,
-    business_unit_cd,
-    line_of_business_cd,
-    insert_dts,
-    record_status_cd,
-    source_record_sequence_nbr,
-    business_hash_key_id,
-    record_hash_key_id,
-    last_process_dts,
-    source_last_process_dts,
-    business_effective_dt,
-    business_expiration_dt,
-    record_start_dts,
-    record_end_dts,
-    active_record_ind,
-    sgk_job_run_id,
-    business_key_txt,
-    updated_by,
-    customer_id,
-    customer_nm,
-    customer_alternate_nm,
-    master_customer_id,
-    parent_customer_id,
-    source_customer_id,
-    source_customer_qualifier_cd,
-    customer_type_cd,
-    address_line_1_txt,
-    address_line_2_txt,
-    address_type_cd,
-    city_nm,
-    country_cd,
-    country_dialing_cd,
-    county_cd,
-    international_address_ind,
-    phone_area_cd,
-    phone_connection_type_cd,
-    phone_nbr,
-    phone_prefix_cd,
-    phone_suffix_cd,
-    phone_usage_type_cd,
-    postal_cd,
-    postal_extension_cd,
-    state_cd,
-    account_manager_nm,
-    implementation_team_manager_nm,
-    new_customer_ind,
-    restricted_data_access_ind,
-    end_to_end_customer_ind,
-    new_contract_ind,
-    sf_account_id,
-    sf_client_id,
-    sf_account_owner_id,
-    sf_business_unit_nm,
-    sf_platform_id_level_nm,
-    sf_coalition_id,
-    sf_customer_desc,
-    sf_care_mgmt_owner_nm,
-    sf_customer_data_flag,
-    sf_customer_data_flag_notes,
-    sf_client_industry_nm,
-    sf_client_industry_peer_group_nm,
-    orig_src_pst_dts,
-    sf_record_type_id,
-    sf_client_level
-)
-VALUES (
-    S.sgk_cfm_customer_id,
-    S.source_system_cd,
-    S.business_unit_cd,
-    S.line_of_business_cd,
-    S.insert_dts,
+  INSERT (
+      sgk_cfm_customer_id,
+      source_system_cd,
+      business_unit_cd,
+      line_of_business_cd,
+      insert_dts,
+      record_status_cd,
+      source_record_sequence_nbr,
+      business_hash_key_id,
+      record_hash_key_id,
+      last_process_dts,
+      source_last_process_dts,
+      business_effective_dt,
+      business_expiration_dt,
+      record_start_dts,
+      record_end_dts,
+      active_record_ind,
+      sgk_job_run_id,
+      business_key_txt,
+      updated_by,
+      customer_id,
+      customer_nm,
+      customer_alternate_nm,
+      master_customer_id,
+      parent_customer_id,
+      source_customer_id,
+      source_customer_qualifier_cd,
+      customer_type_cd,
+      address_line_1_txt,
+      address_line_2_txt,
+      address_type_cd,
+      city_nm,
+      country_cd,
+      country_dialing_cd,
+      county_cd,
+      international_address_ind,
+      phone_area_cd,
+      phone_connection_type_cd,
+      phone_nbr,
+      phone_prefix_cd,
+      phone_suffix_cd,
+      phone_usage_type_cd,
+      postal_cd,
+      postal_extension_cd,
+      state_cd,
+      account_manager_nm,
+      implementation_team_manager_nm,
+      new_customer_ind,
+      restricted_data_access_ind,
+      end_to_end_customer_ind,
+      new_contract_ind,
+      sf_account_id,
+      sf_client_id,
+      sf_account_owner_id,
+      sf_business_unit_nm,
+      sf_platform_id_level_nm,
+      sf_coalition_id,
+      sf_customer_desc,
+      sf_care_mgmt_owner_nm,
+      sf_customer_data_flag,
+      sf_customer_data_flag_notes,
+      sf_client_industry_nm,
+      sf_client_industry_peer_group_nm,
+      orig_src_pst_dts,
+      sf_record_type_id,
+      sf_client_level
+  )
+  VALUES (
+      S.sgk_cfm_customer_id,
+      S.source_system_cd,
+      S.business_unit_cd,
+      S.line_of_business_cd,
+      S.insert_dts,
+      S.record_status_cd,
+      S.source_record_sequence_nbr,
+      S.business_hash_key_id,
+      S.record_hash_key_id,
+      S.last_process_dts,
+      S.source_last_process_dts,
+      S.business_effective_dt,
+      S.business_expiration_dt,
+      S.record_start_dts,
+      S.record_end_dts,
+      S.active_record_ind,
+      S.sgk_job_run_id,
+      S.business_key_txt,
+      S.updated_by,
+      S.customer_id,
+      S.customer_nm,
+      S.customer_alternate_nm,
+      S.master_customer_id,
+      S.parent_customer_id,
+      S.source_customer_id,
+      S.source_customer_qualifier_cd,
+      S.customer_type_cd,
+      S.address_line_1_txt,
+      S.address_line_2_txt,
+      S.address_type_cd,
+      S.city_nm,
+      S.country_cd,
+      S.country_dialing_cd,
+      S.county_cd,
+      S.international_address_ind,
+      S.phone_area_cd,
+      S.phone_connection_type_cd,
+      S.phone_nbr,
+      S.phone_prefix_cd,
+      S.phone_suffix_cd,
+      S.phone_usage_type_cd,
+      S.postal_cd,
+      S.postal_extension_cd,
+      S.state_cd,
+      S.account_manager_nm,
+      S.implementation_team_manager_nm,
+      S.new_customer_ind,
+      S.restricted_data_access_ind,
+      S.end_to_end_customer_ind,
+      S.new_contract_ind,
+      S.sf_account_id,
+      S.sf_client_id,
+      S.sf_account_owner_id,
+      S.sf_business_unit_nm,
+      S.sf_platform_id_level_nm,
+      S.sf_coalition_id,
+      S.sf_customer_desc,
+      S.sf_care_mgmt_owner_nm,
+      S.sf_customer_data_flag,
+      S.sf_customer_data_flag_notes,
+      S.sf_client_industry_nm,
+      S.sf_client_industry_peer_group_nm,
+      S.orig_src_pst_dts,
+      S.sf_record_type_id,
+      S.sf_client_level
+  );
 
-    -- FIXED: record_status_cd is STRING in target
-    CAST(S.record_status_cd AS STRING),
-
-    S.source_record_sequence_nbr,
-    S.business_hash_key_id,
-    S.record_hash_key_id,
-    S.last_process_dts,
-    S.source_last_process_dts,
-    S.business_effective_dt,
-    S.business_expiration_dt,
-    S.record_start_dts,
-
-    -- FIXED: record_end_dts MUST be TIMESTAMP
-    TIMESTAMP('9999-12-31 00:00:00 UTC'),
-
-    S.active_record_ind,
-    S.sgk_job_run_id,
-    S.business_key_txt,
-    S.updated_by,
-    S.customer_id,
-    S.customer_nm,
-    S.customer_alternate_nm,
-    S.master_customer_id,
-    S.parent_customer_id,
-    S.source_customer_id,
-    S.source_customer_qualifier_cd,
-    S.customer_type_cd,
-    S.address_line_1_txt,
-    S.address_line_2_txt,
-    S.address_type_cd,
-    S.city_nm,
-    S.country_cd,
-    S.country_dialing_cd,
-    S.county_cd,
-    S.international_address_ind,
-    S.phone_area_cd,
-    S.phone_connection_type_cd,
-    S.phone_nbr,
-    S.phone_prefix_cd,
-    S.phone_suffix_cd,
-    S.phone_usage_type_cd,
-    S.postal_cd,
-    S.postal_extension_cd,
-    S.state_cd,
-    S.account_manager_nm,
-    S.implementation_team_manager_nm,
-    S.new_customer_ind,
-    S.restricted_data_access_ind,
-    S.end_to_end_customer_ind,
-    S.new_contract_ind,
-    S.sf_account_id,
-    S.sf_client_id,
-    S.sf_account_owner_id,
-    S.sf_business_unit_nm,
-    S.sf_platform_id_level_nm,
-    S.sf_coalition_id,
-    S.sf_customer_desc,
-    S.sf_care_mgmt_owner_nm,
-    S.sf_customer_data_flag,
-    S.sf_customer_data_flag_notes,
-    S.sf_client_industry_nm,
-    S.sf_client_industry_peer_group_nm,
-    S.orig_src_pst_dts,
-    S.sf_record_type_id,
-    S.sf_client_level
-);
+--------------------------------------------------------------
+-- COMMIT TRANSACTION
+--------------------------------------------------------------
+COMMIT TRANSACTION;
