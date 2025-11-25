@@ -1,32 +1,20 @@
--- ============================================================
--- Template: final_merge_template.sql
--- Purpose: SCD Type 1 MERGE into target table using timestamps from JSON
--- ============================================================
 
-MERGE `{{ target_table }}` AS T
-USING (
-  SELECT
-    {{ select_columns }}
-  FROM `{{ raw_table }}`
-) AS S
-ON T.Sf_account_id = S.Sf_account_id
+CREATE OR REPLACE TABLE `edp-dev-carema.edp_ent_cma_plss_onboarding_src.src_customer`
+(
+  customer_id        STRING      NOT NULL,
+  sources     STRING,
+  first_name         STRING,
+  last_name          STRING,
+  email              STRING,
+  phone_number       STRING,
+  country_code       STRING,
+  created_at         TIMESTAMP   NOT NULL,
+  updated_at         TIMESTAMP,
+  is_active          BOOL        DEFAULT TRUE,
 
--- 🔁 Update existing records only if Sf_account_id exists
-WHEN MATCHED AND S.Sf_account_id IS NOT NULL THEN
-  UPDATE SET
-    {% for col in source_columns if col not in ['Sf_account_id', 'last_process_dts', 'source_last_process_dts'] -%}
-    T.{{ col }} = S.{{ col }}{% if not loop.last %},{% endif %}
-    {% endfor %},
-    T.last_process_dts = S.last_process_dts,
-    T.source_last_process_dts = S.source_last_process_dts
-
--- 🆕 Insert new records when Sf_account_id is not found
-WHEN NOT MATCHED THEN
-  INSERT (
-    {% for col in source_columns if col not in ['last_process_dts', 'source_last_process_dts'] -%}
-    {{ col }},{% endfor %} last_process_dts, source_last_process_dts
-  )
-  VALUES (
-    {% for col in source_columns if col not in ['last_process_dts', 'source_last_process_dts'] -%}
-    S.{{ col }},{% endfor %} S.last_process_dts, S.source_last_process_dts
-  );
+  -- optional metadata columns
+  batch_id           STRING,
+  ingestion_timestamp TIMESTAMP  DEFAULT CURRENT_TIMESTAMP()
+)
+PARTITION BY DATE(created_at)
+CLUSTER BY customer_id;
