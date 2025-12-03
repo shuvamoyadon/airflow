@@ -1,6 +1,5 @@
 {
   "bucket_name": "us-central1-airflw-289a8b43-bucket",
-  "env": "dev",
   "projects": [
       {
         "project_name": "playground-s-11-4cb9754d",
