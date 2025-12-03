@@ -2,7 +2,6 @@
 json file will be like this for specific file execution
 {
   "bucket_name": "cma-plss-onboarding-lan-ent-dev",
-  "env": "dev",
   "projects": [
     {
       "project_name": "give your project name for bigquery ",
@@ -19,7 +18,6 @@ or all sql file execution
 
 {
   "bucket_name": "cma-plss-onboarding-lan-ent-dev",
-  "env": "dev",
   "projects": [
     {
       "project_name": give your project name for bigquery",
@@ -36,6 +34,7 @@ import json
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.models import Variable
 
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
@@ -47,13 +46,23 @@ from jinja2 import Template
 # ============================================================
 # CONFIG
 # ============================================================
-PROJECT_NAME = "edp-dev-carema"
+
 GCP_CONN_ID = "bigquery_plss"
 LOCATION = "US"
 
-# Where the CONFIG JSON lives in GCS
-CONFIG_BUCKET_NAME = "your bucket where dag folder exists"
+# -------------------------------------------------------------------
+# env from Airflow Variable
+# In Airflow UI → Admin → Variables:
+#   Key:   ENV
+#   Value: dev   (or test / prod)
+# -------------------------------------------------------------------
+ENV = Variable.get("ENV", default_var="dev")
+GCP_PROJECT_NAME = f"edp-{ENV}-carema"
+CONFIG_BUCKET_NAME=f"cma-plss-onboarding-lan-ent-{ENV}"
+# Config object path inside CONFIG_BUCKET_NAME
 CONFIG_OBJECT_NAME = "config/oldschema.json"
+
+
 
 default_args = {
     "start_date": datetime(2025, 11, 9),
@@ -63,7 +72,23 @@ default_args = {
 def _load_config() -> dict:
     """
     Load JSON config from GCS:
-    gs://CONFIG_BUCKET_NAME/CONFIG_OBJECT_NAME
+      gs://CONFIG_BUCKET_NAME/CONFIG_OBJECT_NAME
+
+    Example oldschema.json:
+
+    {
+      "bucket_name": "cma-plss-onboarding-lan-ent-dev",
+      "projects": [
+        {
+          "project_name": "my-project",
+          "sql_dir": "sql/customer_raw",
+          "sql_files": [
+            "create_customer.sql",
+            "create_customer_address.sql"
+          ]
+        }
+      ]
+    }
     """
     gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
     content = gcs_hook.download(
@@ -80,17 +105,16 @@ def run_ddl_sql_files(**context):
 
     # BigQuery client
     bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID, location=LOCATION)
-    client: bigquery.Client = bq_hook.get_client(project_id=PROJECT_NAME)
+    client: bigquery.Client = bq_hook.get_client(project_id=GCP_PROJECT_NAME)
 
     # Load JSON config (static)
     config = _load_config()
 
     # Top-level config params
+    # bucket_name = where the SQL files live (data bucket)
+    # You can keep it in config OR derive from ENV if you prefer.
     bucket_name = config.get("bucket_name")
-    if not bucket_name:
-        raise ValueError("Config missing required key: 'bucket_name'")
-
-    env = config.get("env", "dev")
+    env = ENV
 
     projects = config.get("projects", [])
     if not projects:
@@ -164,7 +188,7 @@ def run_ddl_sql_files(**context):
 
             print(
                 f"[SUCCESS] Executed SQL => gs://{bucket_name}/{sql_path} "
-                f"for project {project_name}"
+                f"for project {project_name} (env={env})"
             )
 
 
